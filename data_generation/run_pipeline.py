@@ -9,8 +9,9 @@ trajectories and motion-coherent clips, exactly as described in the paper
 Stages (run any contiguous subset with --start_stage / --end_stage):
     1  Grounding        Qwen3 + (Molmo2-8B recaption) + MolmoPoint + SAM3 + K-means,
                         or manually clicked query points (--query_points manual)
-    2  Depth + camera   ViPE monocular SLAM (per-frame metric depth, intrinsics, poses);
-                        static_camera: true keeps the depth/intrinsics but fixes the camera
+    2  Depth + camera   ViPE monocular SLAM or Depth Anything 3 (depth_backend: vipe | da3):
+                        per-frame metric depth, intrinsics, poses; static_camera: true keeps
+                        the depth/intrinsics but fixes the camera
     3  2D tracking      AllTracker dense point tracks on the query points
     4  3D lift          back-project the 2D tracks with depth + camera to a metric world frame
     5  Filter + smooth  consensus-gated trust weighting + ray-only smoothing; with
@@ -123,7 +124,7 @@ DEFAULTS = {
     "alltracker_max_side": 512,
     "max_frame_groups": 5,
     # depth + camera
-    "depth_backend": "vipe",    # writes depth/ + camera/ (see DEPTH_BACKENDS)
+    "depth_backend": "vipe",    # "vipe" | "da3" (see DEPTH_BACKENDS)
     "static_camera": False,     # True = keep depth + intrinsics, camera-to-world = identity
     # filter + smooth (paper / App. A.6 defaults)
     "smooth_steps": 100,
@@ -149,6 +150,9 @@ DEFAULTS = {
     # tooling
     "vipe_cmd": "vipe",
     "vipe_pipeline": "default",  # ViPE config (third_party/vipe/configs/pipeline/*.yaml)
+    "da3_model": "depth-anything/DA3NESTED-GIANT-LARGE-1.1",  # metric; CC BY-NC 4.0 weights
+    "da3_process_res": 504,      # DA3 processing resolution (long side)
+    "da3_max_depth": 20.0,       # clip depth (m); DA3 puts the sky at ~200 m
     "corpus": "molmomotion",
 }
 
@@ -403,8 +407,68 @@ def depth_vipe(vid, video, cfg, scratch):
     return depth, intr["data"], pose["data"], intr["inds"], video_size(scratch / "rgb" / f"{name}.mp4")
 
 
-# depth_backend -> fn(vid, video, cfg, scratch dir) as depth_vipe
-DEPTH_BACKENDS = {"vipe": depth_vipe}
+_DA3 = {}   # loaded Depth Anything 3 model, kept for all videos of a Stage 2 run
+
+
+def write_depth_zip(path, depths):
+    """ViPE's depth artifact format: <frame:05d>.exr (half-float Z channel) in a zip."""
+    import tempfile
+    import zipfile
+
+    import Imath
+    import OpenEXR
+
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for i, d in enumerate(depths):
+            header = OpenEXR.Header(d.shape[1], d.shape[0])
+            header["channels"] = {"Z": Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))}
+            with tempfile.NamedTemporaryFile(suffix=".exr") as f:
+                exr = OpenEXR.OutputFile(f.name, header)
+                exr.writePixels({"Z": d.astype(np.float16).tobytes()})
+                exr.close()
+                z.write(f.name, f"{i:05d}.exr")
+
+
+def depth_da3(vid, video, cfg, scratch):
+    """Depth Anything 3 on all frames of `video` in one multi-view pass: depth, intrinsics and
+    poses jointly (DA3NESTED-* models are metric). Same return as depth_vipe; depth and
+    intrinsics at the video resolution."""
+    import cv2
+    import torch
+    from depth_anything_3.api import DepthAnything3
+
+    cap, frames = cv2.VideoCapture(str(video)), []
+    while (ok_frame := cap.read())[0]:
+        frames.append(cv2.cvtColor(ok_frame[1], cv2.COLOR_BGR2RGB))
+    cap.release()
+    if not frames:
+        return None
+    H, W = frames[0].shape[:2]
+    if cfg["da3_model"] not in _DA3:
+        _DA3.clear()
+        _DA3[cfg["da3_model"]] = DepthAnything3.from_pretrained(cfg["da3_model"]).to("cuda").eval()
+    with torch.inference_mode():
+        pred = _DA3[cfg["da3_model"]].inference(frames, process_res=cfg["da3_process_res"],
+                                                process_res_method="upper_bound_resize")
+    depth = np.asarray(pred.depth, dtype=np.float32)                 # (T, h, w) at processing res
+    K = np.asarray(pred.intrinsics, dtype=np.float64)                # (T, 3, 3) at processing res
+    T, h, w = depth.shape
+    # "*resize" processing rescales the full frame (no crop): map back to the video resolution.
+    sx, sy = W / w, H / h
+    depth = np.clip([cv2.resize(d, (W, H), interpolation=cv2.INTER_LINEAR) for d in depth],
+                    0, cfg["da3_max_depth"])
+    intr = np.stack([K[:, 0, 0] * sx, K[:, 1, 1] * sy, K[:, 0, 2] * sx, K[:, 1, 2] * sy], 1)
+    w2c = np.tile(np.eye(4), (T, 1, 1))
+    w2c[:, :3, :] = np.asarray(pred.extrinsics, dtype=np.float64)[:, :3, :4]   # OpenCV world-to-camera
+    scratch.mkdir(parents=True, exist_ok=True)
+    write_depth_zip(scratch / "depth.zip", depth)
+    return scratch / "depth.zip", intr, np.linalg.inv(w2c), np.arange(T), (W, H)
+
+
+# depth_backend -> fn(vid, video, cfg, scratch dir) -> (depth zip, intrinsics (T, 4),
+# camera-to-world (T, 4, 4), inds (T,), image size (w, h)) or None; Stage 2 writes them
+# to <vid>/depth.zip + <vid>/camera/, re-anchored to frame 0 (identity with static_camera).
+DEPTH_BACKENDS = {"vipe": depth_vipe, "da3": depth_da3}
 
 
 def stage2_depth_camera(tasks, cfg, paths):
@@ -460,6 +524,7 @@ def stage2_depth_camera(tasks, cfg, paths):
               f"{backend} camera drift {100 * drift:.1f} cm"
               + (" (replaced by a fixed camera)" if cfg["static_camera"] else ""))
     shutil.rmtree(paths.tmp / backend, ignore_errors=True)
+    _DA3.clear()
     free_gpu()
 
 

@@ -27,7 +27,7 @@ trained here.
 | # | Stage | Model / method | Output |
 |---|-------|----------------|--------|
 | 1 | **Semantic grounding** | Qwen3-0.6B (object phrase) → optional Molmo2-8B re-caption → MolmoPoint-Vid-4B (2D point) → SAM 3 (mask) → K-means (N=100 query points) | `<vid>/query_points/*.npz` |
-| 2 | **Metric depth + camera** | ViPE monocular SLAM (`depth_backend`); identity poses with `static_camera` | `<vid>/depth.zip`, `<vid>/camera/{intrinsics,pose}.npz` |
+| 2 | **Metric depth + camera** | ViPE monocular SLAM or Depth Anything 3 (`depth_backend: vipe / da3`); identity poses with `static_camera` | `<vid>/depth.zip`, `<vid>/camera/{intrinsics,pose}.npz` |
 | 3 | **2D point tracking** | AllTracker (dense, sliding window) | `<vid>/tracks_2d.npz` |
 | 4 | **3D lift** | back-project visible 2D tracks with the stage-2 depth/intrinsics/pose into a world frame anchored at the first camera | `<vid>/tracks_3d.npz` |
 | 5 | **Filter + smooth** | anchor tracks (K=16) → trust weights → mean-shift auto-split → z-score drop → ray-only consensus smoothing | `<vid>/final_tracks/<vid>_{3d,2d,filter_meta}.npz` |
@@ -88,6 +88,7 @@ data_generation/
 │   ├── robot.yaml             #   agent="robot gripper"  (real-robot manipulation)
 │   ├── robot_static.yaml      #   robot.yaml + fixed camera
 │   ├── sharerobot_static.yaml #   ShareRobot episodes, fixed camera, native 4 fps / resolution
+│   ├── sharerobot_static_da3.yaml  # same, with Depth Anything 3 instead of ViPE
 │   └── in_the_wild.yaml       #   tracking-mode  (in-the-wild internet video)
 ├── third_party/               # vendored frozen models (see third_party/README.md)
 │   ├── sam3/                  #   SAM 3 + MolmoPoint/Qwen3/Molmo2 grounding glue
@@ -246,7 +247,12 @@ config.yaml                       the effective config of the (last) run
 ```
 
 A depth backend only has to provide depth, intrinsics and camera-to-world poses
-(`DEPTH_BACKENDS` in `run_pipeline.py`); stage 2 writes them into `depth/` + `camera/`.
+(`DEPTH_BACKENDS` in `run_pipeline.py`); stage 2 writes them into `<vid>/depth.zip` +
+`<vid>/camera/`. Two are available: `depth_backend: vipe` (monocular SLAM) and
+`depth_backend: da3` (Depth Anything 3, `da3_model` default `DA3NESTED-GIANT-LARGE-1.1`:
+metric depth, intrinsics and poses in one multi-view pass over all frames; the weights are
+CC BY-NC 4.0). DA3 is installed in the project venv from a pinned source archive of
+github.com/ByteDance-Seed/Depth-Anything-3 (see `pyproject.toml`).
 
 ### Scaling
 

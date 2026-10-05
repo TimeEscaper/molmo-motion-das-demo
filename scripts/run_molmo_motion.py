@@ -639,9 +639,21 @@ render_trajectory_3d = visualize_trajectory_3d
 # Inputs.
 # ──────────────────────────────────────────────────────────────────────────
 
-def load_example(example_dir: Path, history_size: int):
-    """Load the bundled clip's frames, query points, history, intrinsics, action."""
+def load_example(example_dir: Path, history_size: int, init_frame: bool = False):
+    """Load the bundled clip's frames, query points, history, intrinsics, action. With
+    `init_frame` (H=1), the input is the example's init frame instead of t0 (frame_init.jpg,
+    points_*_at_init.pt, intrinsics_K_init.pt, as written by scripts/data/sample_sharerobot.py);
+    the ground-truth future is unchanged."""
     meta = json.loads((example_dir / "meta.json").read_text())
+    caption_file = example_dir / "caption.txt"
+    action = caption_file.read_text().strip() if caption_file.exists() else meta["action"]
+    if init_frame:
+        if not (example_dir / "frame_init.jpg").exists():
+            raise SkipExample(f"no frame_init.jpg in {example_dir}")
+        return (meta, [Image.open(example_dir / "frame_init.jpg").convert("RGB")],
+                torch.load(example_dir / "points_2d_at_init.pt"),         # (P, 2)
+                torch.load(example_dir / "points_3d_at_init.pt"),         # (1, P, 3)
+                torch.load(example_dir / "intrinsics_K_init.pt"), action)
     history_frames = [
         Image.open(example_dir / f"frame_t{i:+d}.jpg").convert("RGB")
         for i in range(-(history_size - 1), 1)        # H=3 -> t-2, t-1, t+0
@@ -652,8 +664,6 @@ def load_example(example_dir: Path, history_size: int):
     # t-2..t_0 (shape (3, P, 3)). Same indexing as `history_frames` above.
     points_3d_history = torch.load(example_dir / "points_3d_history.pt")[-history_size:]
     intrinsics = torch.load(example_dir / "intrinsics_K.pt")             # (3, 3)
-    caption_file = example_dir / "caption.txt"
-    action = caption_file.read_text().strip() if caption_file.exists() else meta["action"]
     return meta, history_frames, points_2d_at_t0, points_3d_history, intrinsics, action
 
 
@@ -821,7 +831,7 @@ def process_example(example_dir: Path, args, predict) -> list[str]:
     """Predict (or load the bundled prediction) and render every requested
     visualization into ``<output>/<input folder name>/``. Returns the written paths."""
     (meta, history_frames, points_2d_at_t0, points_3d_history,
-     intrinsics, action) = load_example(example_dir, args.history)
+     intrinsics, action) = load_example(example_dir, args.history, args.init_frame)
     t0_image = history_frames[-1]
 
     if predict is None:
@@ -849,6 +859,7 @@ def process_example(example_dir: Path, args, predict) -> list[str]:
             "example": example_dir.name,
             "run_name": args.run_name,
             "history": args.history,
+            "input_frame": "init" if args.init_frame else "t0",
             "prediction_source": "predictions_h3.jsonl" if predict is None else args.model,
             **compute_trajectory_metrics(future_3d, gt["future_3d"], gt["future_vis"]),
         }
@@ -939,6 +950,9 @@ def main():
     ap.add_argument("--side-by-side", action=argparse.BooleanOptionalAction, default=True,
                     help="Render prediction | ground truth | original video in one row; "
                          "skipped for examples without gt_future_3d.pt + clip.mp4.")
+    ap.add_argument("--init-frame", action="store_true",
+                    help="H=1 only: feed the example's init frame (frame_init.jpg + points at it) "
+                         "instead of t0, still scoring the future of t0.")
     ap.add_argument("--from-prediction", action="store_true",
                     help="Skip the model (no GPU needed); use the bundled "
                          "released-model prediction from predictions_h3.jsonl.")
@@ -947,6 +961,8 @@ def main():
     default_model, default_horizon = RELEASED_MODELS[args.history]
     model_path = args.model = args.model or default_model
     args.future_horizon = args.future_horizon or default_horizon
+    if args.init_frame and args.history != 1:
+        raise SystemExit("--init-frame needs --history 1")
     if args.from_prediction and args.history != 3:
         raise SystemExit("--from-prediction only has bundled H=3 predictions "
                          "(predictions_h3.jsonl); drop --history 1.")

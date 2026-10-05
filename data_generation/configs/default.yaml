@@ -21,7 +21,7 @@ alltracker_max_side: 512
 max_frame_groups: 5          # skip videos whose grounding yields >5 detection frames
 
 # ── Stage 2: depth + camera ───────────────────────────────────────────────────
-depth_backend: vipe          # writes depth/ + camera/ (run_pipeline.DEPTH_BACKENDS)
+depth_backend: vipe          # vipe | da3 (Depth Anything 3); writes <vid>/depth.zip + camera/
 static_camera: false         # true = keep depth/intrinsics, camera-to-world = identity
                              # (with ViPE pair with vipe_pipeline: static_camera, else focal
                              # length drifts)
@@ -54,3 +54,6 @@ visualize: true              # viz/<vid>.mp4 (scripts/visualize_tracks.py)
 # ── tooling ───────────────────────────────────────────────────────────────────
 vipe_cmd: vipe               # ViPE console script (installed from third_party/vipe)
 vipe_pipeline: default       # ViPE pipeline config; static_camera = keep GeoCalib intrinsics fixed
+da3_model: depth-anything/DA3NESTED-GIANT-LARGE-1.1   # metric; CC BY-NC 4.0 weights
+da3_process_res: 504         # DA3 processing resolution (long side)
+da3_max_depth: 20.0          # clip depth (m); DA3 puts the sky at ~200 m

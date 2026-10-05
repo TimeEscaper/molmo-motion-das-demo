@@ -1,0 +1,14 @@
+# ShareRobot planning episodes (scripts/data/extract_sharerobot.py): 30 frames subsampled
+# from a real-robot (Open-X-Embodiment) episode, fixed third-person camera.
+# Depth Anything 3 supplies metric depth + intrinsics; its poses are replaced by identity.
+# The 30 frames are used as they are (no re-encoding).
+corpus: sharerobot_static_da3
+agent: robot gripper
+point_prompt_template: "point to {obj} gripped and picked up by the {agent}"
+fps: 4                       # ShareRobot keeps no timestamps; bridge is ~4 fps
+                             # (episode.json: effective_fps_estimate)
+encode_480p: false
+static_camera: true
+depth_backend: da3           # Depth Anything 3 (DA3NESTED-GIANT-LARGE-1.1, metric) instead of ViPE
+keep_objects: first          # keep only the first moving object grounding names (drops e.g.
+                             # the destination or a reference object)
