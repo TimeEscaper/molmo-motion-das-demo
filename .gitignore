@@ -39,3 +39,8 @@ dataset_recipes/*
 
 # examples output mp4s
 *_2d.mp4
+
+weights/
+!weights/.gitkeep
+
+result/

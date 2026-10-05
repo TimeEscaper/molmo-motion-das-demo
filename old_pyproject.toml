@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "molmo-motion"
+version = "0.1.0"
+description = "MolmoMotion: 3D point-trajectory prediction from RGB video, 2D query points, and natural-language actions"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Allen Institute for AI" },
+]
+keywords = ["video", "trajectory", "3d", "vision-language", "molmo"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+    "Intended Audience :: Science/Research",
+]
+
+dependencies = [
+    "torch>=2.5",
+    "torchvision",
+    "transformers>=4.45,<5",
+    "huggingface_hub>=0.24",
+    "numpy>=1.26",
+    "pillow>=10",
+    "omegaconf>=2.3",
+    "h5py>=3.10",
+    "tqdm",
+    "cached_path",
+    "datasets",
+    "einops",
+    "decord",
+    "av",
+    "torchmetrics",
+    "packaging",
+    "requests",
+    "opencv-python-headless",
+    "scipy",
+    "torchcodec",
+]
+
+[project.optional-dependencies]
+train = [
+    "wandb",
+    "tensorboard",
+]
+viz = [
+    "matplotlib",
+    "imageio[ffmpeg]",
+]
+dev = [
+    "pytest>=7",
+    "ruff>=0.5",
+    "black>=24",
+]
+
+[project.urls]
+Repository = "https://github.com/allenai/molmo-motion"
+Models = "https://huggingface.co/collections/allenai/molmomotion"
+Dataset = "https://huggingface.co/datasets/allenai/molmo-motion-1m"
+
+[project.scripts]
+molmo-motion-train = "molmo_motion.cli.train:main"
+molmo-motion-eval = "molmo_motion.cli.eval:main"
+molmo-motion-convert-hf = "molmo_motion.hf_model.convert_molmo_motion_to_hf:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]   # line length handled by black
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
