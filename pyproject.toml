@@ -6,13 +6,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "accelerate>=1.0.0",
-    "addict>=2.4",  # undeclared dependency of depth-anything-3
+    "addict>=2.4", # undeclared dependency of depth-anything-3
     "av>=16.0.0",
     "cached-path>=1.8.10",
     "click>=8.1.0",
     "datasets>=2.19.1",
     "decord>=0.6.0",
-    "depth-anything-3",  # DA3 depth backend; pinned source archive below (git clone is blocked by the proxy)
+    "depth-anything-3",
+    "diffusers==0.33.1", # DA3 depth backend; pinned source archive below (git clone is blocked by the proxy)
     "einops>=0.8.0",
     "ftfy>=6.1.0",
     "gdown>=5.2.0,<6", # ViPE track-anything ckpt download; 6.x dropped `fuzzy=`
@@ -40,6 +41,7 @@ dependencies = [
     "scikit-image>=0.25.0",
     "scikit-learn>=1.8.0",
     "scipy>=1.15.0",
+    "sentencepiece>=0.2.0",
     "timm>=1.0.24",
     "tokenizers>=0.21.0",
     "torch==2.9.1",

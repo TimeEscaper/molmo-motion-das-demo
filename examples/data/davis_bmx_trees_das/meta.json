@@ -1,0 +1,35 @@
+{
+  "id": "davis_bmx_trees_das",
+  "dataset": "davis_bench",
+  "video": "bmx-trees",
+  "obj": "bike_rider",
+  "t0_absolute": 2,
+  "history_frame_indices": [
+    0,
+    1,
+    2
+  ],
+  "point_indices": [
+    9,
+    12,
+    17,
+    18,
+    27,
+    29,
+    32,
+    34
+  ],
+  "n_points": 8,
+  "history_size": 3,
+  "image_size_wh": [
+    854,
+    480
+  ],
+  "has_intrinsics": true,
+  "caption": "A BMX rider rides through the trees",
+  "derived_from": "davis_bmx_trees",
+  "changes": {
+    "intrinsics_K": "principal point shifted by (-52.8, -3.9) px so the t0 anchors reproject onto points_2d_at_t0 (mean error 52.9 -> 0.30 px); fx, fy unchanged",
+    "mask_points.json": "extra SAM click on the bike for the DaS object mask"
+  }
+}

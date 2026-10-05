@@ -1,0 +1,9 @@
+{
+  "points": [
+    [
+      380,
+      318
+    ]
+  ],
+  "note": "extra positive SAM clicks (t0-frame pixels) for parts that move with the query points: the bike under the rider (the query points are all on the rider)"
+}

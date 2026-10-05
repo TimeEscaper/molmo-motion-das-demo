@@ -1,0 +1,3 @@
+[submodule "das"]
+	path = das
+	url = https://github.com/IGL-HKUST/DiffusionAsShader.git
