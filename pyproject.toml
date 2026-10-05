@@ -13,6 +13,7 @@ dependencies = [
     "decord>=0.6.0",
     "einops>=0.8.0",
     "ftfy>=6.1.0",
+    "gdown>=5.2.0,<6",  # ViPE track-anything ckpt download; 6.x dropped `fuzzy=`
     "h5py>=3.10",
     "huggingface-hub>=0.25.0",
     "hydra-core>=1.3.0",
@@ -28,6 +29,7 @@ dependencies = [
     "packaging>=24.1",
     "pandas>=2.3.3",
     "pillow>=11.0.0",
+    "prettytable>=3.12.0",  # AllTracker run-query-points.py
     "pycocotools>=2.0.0",
     "python-dotenv>=1.2.4",
     "requests>=2.28.1",
@@ -43,7 +45,7 @@ dependencies = [
     "torchmetrics>=1.0.3",
     "torchvision==0.24.1",
     "tqdm>=4.66.0",
-    "transformers>=4.56",
+    "transformers==4.57.1",  # MolmoPoint/Molmo2 grounding + ViPE GroundingDINO break on 5.x
     "vipe",
 ]
 
@@ -60,4 +62,5 @@ torch = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
 torchcodec = { index = "pytorch-cu128" }
 sam3 = { path = "data_generation/third_party/sam3" }
-vipe = { path = "data_generation/third_party/vipe" }
+# editable: ViPE reads its hydra configs from third_party/vipe/configs (not packaged)
+vipe = { path = "data_generation/third_party/vipe", editable = true }

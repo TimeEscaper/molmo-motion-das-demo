@@ -26,12 +26,12 @@ trained here.
 
 | # | Stage | Model / method | Output |
 |---|-------|----------------|--------|
-| 1 | **Semantic grounding** | Qwen3-0.6B (object phrase) → optional Molmo2-8B re-caption → MolmoPoint-Vid-4B (2D point) → SAM 3 (mask) → K-means (N=100 query points) | `grounding/<vid>/query_points/*.npz` |
-| 2 | **Metric depth + pose** | ViPE monocular SLAM | `vipe_results/{depth,pose,intrinsics,rgb}/<vid>.*` |
-| 3 | **2D point tracking** | AllTracker (dense, sliding window) | `tracks_2d/<vid>/<vid>_merged.npz` |
-| 4 | **3D lift** | back-project visible 2D tracks with ViPE depth/intrinsics/pose into a world frame anchored at the query-time camera | `tracks_3d/<corpus>/<vid>_merged_3d_tracks.npz` |
-| 5 | **Filter + smooth** | anchor tracks (K=16) → trust weights → mean-shift auto-split → z-score drop → ray-only consensus smoothing | `final_tracks/<vid>_{3d,2d}.npz` + `<vid>_filter_meta.npz` |
-| 6 | **Video-level clipping** | per-frame trimmed-mean 3D displacement, threshold τ, merge gaps, drop short runs | `clips/<corpus>_clips.json` |
+| 1 | **Semantic grounding** | Qwen3-0.6B (object phrase) → optional Molmo2-8B re-caption → MolmoPoint-Vid-4B (2D point) → SAM 3 (mask) → K-means (N=100 query points) | `<vid>/query_points/*.npz` |
+| 2 | **Metric depth + camera** | ViPE monocular SLAM (`depth_backend`); identity poses with `static_camera` | `<vid>/depth.zip`, `<vid>/camera/{intrinsics,pose}.npz` |
+| 3 | **2D point tracking** | AllTracker (dense, sliding window) | `<vid>/tracks_2d.npz` |
+| 4 | **3D lift** | back-project visible 2D tracks with the stage-2 depth/intrinsics/pose into a world frame anchored at the first camera | `<vid>/tracks_3d.npz` |
+| 5 | **Filter + smooth** | anchor tracks (K=16) → trust weights → mean-shift auto-split → z-score drop → ray-only consensus smoothing | `<vid>/final_tracks/<vid>_{3d,2d,filter_meta}.npz` |
+| 6 | **Video-level clipping** | per-frame trimmed-mean 3D displacement, threshold τ, merge gaps, drop short runs | `<vid>/clips.json` |
 
 ### What each stage does
 
@@ -78,7 +78,7 @@ contiguous high-motion segments, which become the training clips. Output schema
 
 ```
 data_generation/
-├── run_pipeline.py            # end-to-end driver (stages 1–6)
+├── run_pipeline.py            # end-to-end driver (stages 1–7)
 ├── pipeline/
 │   ├── grounding_worker.py    # stage 1 (loads all grounding models once)
 │   └── clip_segments.py       # stage 6 (video-level motion clipping)
@@ -86,6 +86,8 @@ data_generation/
 │   ├── default.yaml           # all hyperparameters (paper defaults)
 │   ├── human_manipulation.yaml  # agent="hand"  (egocentric / third-person manipulation)
 │   ├── robot.yaml             #   agent="robot gripper"  (real-robot manipulation)
+│   ├── robot_static.yaml      #   robot.yaml + fixed camera
+│   ├── sharerobot_static.yaml #   ShareRobot episodes, fixed camera, native 4 fps / resolution
 │   └── in_the_wild.yaml       #   tracking-mode  (in-the-wild internet video)
 ├── third_party/               # vendored frozen models (see third_party/README.md)
 │   ├── sam3/                  #   SAM 3 + MolmoPoint/Qwen3/Molmo2 grounding glue
@@ -95,6 +97,8 @@ data_generation/
 │   ├── install.sh             # deps + editable installs + weight prefetch
 │   ├── download_models.sh     # pre-fetch checkpoints (else auto-download on use)
 │   ├── check_env.py           # environment sanity check
+│   ├── click_query_points.py  # click query points by hand (replaces stage 1, needs a GUI)
+│   ├── visualize_tracks.py    # MP4 of a run: 2D tracks + 3D trajectories
 │   └── run_example.sh
 └── examples/tasks_example.json
 ```
@@ -158,8 +162,9 @@ python run_pipeline.py --tasks my_tasks.json --config configs/robot.yaml \
     --work_dir ./runs/my_run --start_stage 4 --end_stage 6
 ```
 
-Final per-clip ranges land in `./runs/my_run/clips/<corpus>_clips.json`; the
-filtered 3D/2D trajectories are in `./runs/my_run/final_tracks/`.
+Every video gets its own folder `./runs/my_run/<video_id>/`: per-clip ranges in
+`clips.json`, the filtered 3D/2D trajectories in `final_tracks/`, a visualization in
+`viz.mp4` (layout below).
 
 ### Choosing a config
 
@@ -172,12 +177,82 @@ filtered 3D/2D trajectories are in `./runs/my_run/final_tracks/`.
 All hyperparameters (K-means N, fps, smoothing α/λ/z-threshold/anchors, clip
 threshold τ, …) live in `configs/default.yaml`; presets override only what differs.
 
+### Episode folders, manual query points, fixed camera
+
+Instead of a tasks JSON, `--episodes` takes episode folders as written by
+`scripts/data/extract_sharerobot.py` (`<video_id>.mp4`, `goal.txt` = the action,
+`episode.json`), or folders of them:
+
+```bash
+python run_pipeline.py --episodes ../result/sharerobot_raw \
+    --config configs/sharerobot_static.yaml --work_dir ./runs/sharerobot_static
+```
+
+Stage 1 grounds the object automatically by default. With `--query_points manual` it
+imports clicked points from each episode's `query_points/` folder instead (with `--tasks`,
+from a task's `"query_points_dir"`): files `*_obj<k>_f<frame>.npz` holding `query_points`
+(N, 3) `[frame, x, y]` and `dim` `[H, W]` of the image that was clicked, as written by
+
+```bash
+python scripts/click_query_points.py --episodes ../result/sharerobot_raw   # -> <episode>/query_points/
+```
+
+(The click tool needs an OpenCV build with GUI support, i.e. `opencv-python`, and a display;
+the project venv ships `opencv-python-headless`.)
+
+Coordinates are rescaled to the video by its width (an aspect-preserving resize, possibly
+with a caption band below, as in `vis_sharerobot.py`'s `clip.mp4`). Imported points are
+cached in `<work_dir>/<video_id>/query_points/`; delete that folder to re-import.
+
+**Fixed camera.** `static_camera: true` keeps ViPE's metric depth and intrinsics but
+writes identity camera-to-world poses to `camera/pose/` instead of its SLAM poses (whose
+drift is only logged), so the world frame is the camera frame. Pair it with
+`vipe_pipeline: static_camera` (`third_party/vipe/configs/pipeline/static_camera.yaml`):
+without camera motion the focal length is unobservable in bundle adjustment and drifts
+(e.g. fx 540 -> 3800 px on a Bridge clip), which shrinks lateral 3D motion.
+
+**Manipulated object only.** Grounding can name more objects than are moved (e.g.
+"croissant | towel" for "move a croissant to a towel"). An object *moves* if its motion
+(median over its smoothed tracks of the largest 3D displacement from the query frame) is at
+least `moving_ratio` (0.5) x that of the most-moving object. `keep_objects: moving` keeps all
+moving objects; `keep_objects: first` (set in `robot_static.yaml` / `sharerobot_static.yaml`)
+keeps only the first moving object in grounding order, i.e. the one the action is about
+(for "moving a vessel next to a knife" the vessel, even if the robot also moves the knife).
+The other objects' query points, 2D and 3D tracks are deleted (the grounding meta json lists
+them under `dropped_objects` with the reason and motion) and stage 5 re-filters the rest, so
+all outputs contain the kept object only.
+
+`encode_480p: false` feeds the source video as it is (native resolution and frame rate,
+copied into the video's folder as `video.mp4`). Stage 5 reports the re-projection error of the final 3D tracks
+against the 2D tracks with the stage-2 camera.
+
+**Work dir layout.** One folder per video, the same for every camera mode and depth
+backend; only what later stages or users read is kept (backend / tracker scratch goes to
+`.tmp/` and is removed):
+
+```
+config.yaml                       the effective config of the (last) run
+<vid>/meta.json                   action, source video, query-point mode, episode.json (--episodes)
+<vid>/video.mp4                   the video all stages run on (copy of the source, or 480p re-encode)
+<vid>/query_points/*_f<frame>.npz query points per object and frame (+ grounding meta json)
+<vid>/depth.zip                   per-frame metric depth (zipped EXR) at the camera image size
+<vid>/camera/intrinsics.npz       data (T,4) [fx,fy,cx,cy], inds, K (T,3,3), image_size_wh
+<vid>/camera/pose.npz             data (T,4,4) camera-to-world used for the lift, inds
+<vid>/tracks_2d.npz               AllTracker tracks of all query points
+<vid>/tracks_3d.npz               lifted 3D tracks (world frame = camera at frame 0)
+<vid>/final_tracks/<vid>_{3d,2d}.npz  filtered + smoothed tracks; <vid>_filter_meta.npz diagnostics
+<vid>/clips.json                  motion clips
+<vid>/viz.mp4                     stage 7: 2D tracks over the video + 3D trajectories
+```
+
+A depth backend only has to provide depth, intrinsics and camera-to-world poses
+(`DEPTH_BACKENDS` in `run_pipeline.py`); stage 2 writes them into `depth/` + `camera/`.
+
 ### Scaling
 
 The driver processes a list of videos in one process (Stage 1 loads all grounding
 models once). For corpus-scale runs, shard your tasks JSON across jobs (each writes
-to its own `work_dir`, or a shared one — outputs are keyed by `video_id`), and merge
-the per-shard `clips/*.json` at the end. Stage 2 (ViPE) dominates wall-clock
+to its own `work_dir`, or a shared one — every video has its own `<video_id>/` folder). Stage 2 (ViPE) dominates wall-clock
 (~80%); stages 4–6 are CPU-only.
 
 ---

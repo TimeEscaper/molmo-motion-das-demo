@@ -1,0 +1,8 @@
+# Fixed camera: keep the GeoCalib intrinsics instead of refining them in SLAM.
+# With no camera motion the focal length is unobservable in bundle adjustment and
+# drifts (e.g. fx 540 -> 3800 px on a Bridge clip), which shrinks lateral 3D motion.
+defaults:
+  - default
+
+slam:
+  optimize_intrinsics: false

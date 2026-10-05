@@ -1,0 +1,15 @@
+# ShareRobot planning episodes (scripts/data/extract_sharerobot.py): 30 frames subsampled
+# from a real-robot (Open-X-Embodiment) episode, fixed third-person camera.
+# ViPE still supplies metric depth, but its SLAM poses are replaced by identity and the
+# GeoCalib intrinsics are kept fixed: with no camera motion SLAM cannot refine the focal
+# length and it drifts. The 30 frames are used as they are (no re-encoding).
+corpus: sharerobot_static
+agent: robot gripper
+point_prompt_template: "point to {obj} gripped and picked up by the {agent}"
+fps: 4                       # ShareRobot keeps no timestamps; bridge is ~4 fps
+                             # (episode.json: effective_fps_estimate)
+encode_480p: false
+static_camera: true
+vipe_pipeline: static_camera
+keep_objects: first          # keep only the first moving object grounding names (drops e.g.
+                             # the destination or a reference object)

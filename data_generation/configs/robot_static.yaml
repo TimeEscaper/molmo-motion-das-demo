@@ -1,0 +1,14 @@
+# Real-robot manipulation video from a fixed (third-person) camera.
+# ViPE still supplies metric depth, but its SLAM poses are replaced by identity and the
+# GeoCalib intrinsics are kept fixed: with no camera motion SLAM cannot refine the focal
+# length and it drifts.
+corpus: robot_static
+agent: robot gripper
+point_prompt_template: "point to {obj} gripped and picked up by the {agent}"
+recaption: true
+fps: 15
+clip_threshold: 0.02
+static_camera: true
+vipe_pipeline: static_camera
+keep_objects: first          # keep only the first moving object grounding names (drops e.g.
+                             # the destination or a reference object)

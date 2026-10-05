@@ -15,11 +15,23 @@ save_debug: false
 
 # ── Stage 2/3: video + 2D tracking ────────────────────────────────────────────
 fps: 15                      # pipeline frame rate (tracks computed at this rate)
-encode_480p: true            # re-encode source to 854x480 before ViPE + AllTracker
+encode_480p: true            # re-encode source to 854x480 @ fps before ViPE + AllTracker;
+                             # false = use the source video as-is (native res + fps)
 alltracker_max_side: 512
 max_frame_groups: 5          # skip videos whose grounding yields >5 detection frames
 
+# ── Stage 2: depth + camera ───────────────────────────────────────────────────
+depth_backend: vipe          # writes depth/ + camera/ (run_pipeline.DEPTH_BACKENDS)
+static_camera: false         # true = keep depth/intrinsics, camera-to-world = identity
+                             # (with ViPE pair with vipe_pipeline: static_camera, else focal
+                             # length drifts)
+
 # ── Stage 5: filter + smooth (App. A.6) ───────────────────────────────────────
+keep_objects: all            # all | moving | first: keep all grounded objects, those that move,
+                             # or only the first moving one in grounding order (grounding may
+                             # also name e.g. the destination); the others are removed from
+                             # all outputs, then the rest is re-filtered
+moving_ratio: 0.5            # moving: object motion >= ratio * motion of the most-moving object
 smooth_steps: 100
 smooth_lr: 0.05
 alpha: 1000.0                # L_pin weight
@@ -36,5 +48,9 @@ clip_min_gap: 5              # merge runs separated by < this many frames
 clip_min_clip_sec: 0.5       # min-clip floor = max(3, round(0.5 * fps))
 clip_min_frames: null        # override the floor (e.g. 24 for sim corpora)
 
+# ── Stage 7: visualization ────────────────────────────────────────────────────
+visualize: true              # viz/<vid>.mp4 (scripts/visualize_tracks.py)
+
 # ── tooling ───────────────────────────────────────────────────────────────────
 vipe_cmd: vipe               # ViPE console script (installed from third_party/vipe)
+vipe_pipeline: default       # ViPE pipeline config; static_camera = keep GeoCalib intrinsics fixed

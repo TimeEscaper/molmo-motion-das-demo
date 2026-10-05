@@ -46,6 +46,8 @@ click>=8.1.0
 ninja
 
 # Misc
+gdown==5.2.0                 # ViPE track-anything ckpt download; 6.x dropped `fuzzy=`
+prettytable==3.12.0          # AllTracker run-query-points.py
 matplotlib>=3.9.0
 tqdm>=4.66.0
 ftfy>=6.1.0
