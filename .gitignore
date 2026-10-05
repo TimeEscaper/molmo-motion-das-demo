@@ -44,3 +44,5 @@ weights/
 !weights/.gitkeep
 
 result/
+
+.env
