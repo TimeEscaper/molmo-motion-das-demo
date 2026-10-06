@@ -34,6 +34,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import molmo_motion.numpy_compat  # noqa: F401  (track NPZs hold numpy-2 pickles; venv has numpy 1.26)
 from molmo_motion.data.dataset import Dataset
 from molmo_motion.data.video_loader import VideoFrames
 from molmo_motion.tokenizer import POINT_FEATURE_TOKEN, TWO_D_FEAT_START_TOKEN, TWO_D_FEAT_END_TOKEN

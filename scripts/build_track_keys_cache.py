@@ -25,11 +25,16 @@ clips_by_object key as present.
 import argparse
 import json
 import os
+import runpy
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
 from tqdm import tqdm
+
+# Track NPZs hold numpy-2 pickles and the venv has numpy 1.26: alias numpy._core (run the
+# module file, not `import molmo_motion...`, which would load the whole package).
+runpy.run_path(str(Path(__file__).resolve().parents[1] / "src" / "molmo_motion" / "numpy_compat.py"))
 
 MOLMO_MOTION_1M_ROOT = os.environ.get(
     "MOLMO_MOTION_1M_ROOT", "data/molmo-motion-1m")

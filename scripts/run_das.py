@@ -47,6 +47,7 @@ import gc
 import json
 import sys
 import tempfile
+import traceback
 from pathlib import Path
 
 import cv2
@@ -260,14 +261,19 @@ def build_tracking(inp: dict, depth: np.ndarray, mask: np.ndarray, args) -> tupl
 # Diffusion as Shader.
 # ──────────────────────────────────────────────────────────────────────────
 
-def das_generate(checkpoint: Path, image: Image.Image, prompt: str, tracking: np.ndarray, args) -> list:
-    """DaS's `DiffusionAsShaderPipeline._infer` (das/models/pipelines.py) without its
-    tracking / depth / repainting dependencies: 49 PIL frames at 720x480."""
+_DAS = {}   # loaded DaS pipeline, kept for all examples of a run
+
+
+def das_pipeline(checkpoint: Path):
+    """DaS's CogVideoX I2V tracking pipeline, as in `DiffusionAsShaderPipeline._infer`
+    (das/models/pipelines.py), loaded once per run."""
     from diffusers import AutoencoderKLCogVideoX, CogVideoXDDIMScheduler, CogVideoXDPMScheduler
     from transformers import T5EncoderModel, T5Tokenizer
     from models.cogvideox_tracking import CogVideoXImageToVideoPipelineTracking, CogVideoXTransformer3DModelTracking
 
-    dtype, device = torch.bfloat16, "cuda"
+    if checkpoint in _DAS:
+        return _DAS[checkpoint]
+    _DAS.clear()
     pipe = CogVideoXImageToVideoPipelineTracking(
         vae=AutoencoderKLCogVideoX.from_pretrained(checkpoint, subfolder="vae"),
         text_encoder=T5EncoderModel.from_pretrained(checkpoint, subfolder="text_encoder"),
@@ -275,11 +281,19 @@ def das_generate(checkpoint: Path, image: Image.Image, prompt: str, tracking: np
         transformer=CogVideoXTransformer3DModelTracking.from_pretrained(checkpoint, subfolder="transformer"),
         scheduler=CogVideoXDDIMScheduler.from_pretrained(checkpoint, subfolder="scheduler"))
     pipe.scheduler = CogVideoXDPMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
-    pipe.to(device, dtype=dtype)
+    pipe.to("cuda", dtype=torch.bfloat16)
     pipe.vae.enable_slicing()
     pipe.vae.enable_tiling()
     pipe.transformer.gradient_checkpointing = False
+    _DAS[checkpoint] = pipe
+    return pipe
 
+
+def das_generate(checkpoint: Path, image: Image.Image, prompt: str, tracking: np.ndarray, args) -> list:
+    """DaS's `DiffusionAsShaderPipeline._infer` (das/models/pipelines.py) without its
+    tracking / depth / repainting dependencies: 49 PIL frames at 720x480."""
+    pipe = das_pipeline(checkpoint)
+    dtype, device = torch.bfloat16, "cuda"
     maps = torch.from_numpy(tracking).permute(0, 3, 1, 2).float().div(255).to(device, dtype)  # (T, C, H, W)
     with torch.inference_mode():
         latents = pipe.vae.encode(maps.unsqueeze(0).permute(0, 2, 1, 3, 4)).latent_dist.sample()
@@ -292,7 +306,6 @@ def das_generate(checkpoint: Path, image: Image.Image, prompt: str, tracking: np
             generator=torch.Generator().manual_seed(args.seed),
             tracking_maps=latents, tracking_image=maps[:1], height=DAS_H, width=DAS_W,
         ).frames[0]
-    del pipe
     free_gpu()
     return frames
 
@@ -360,7 +373,8 @@ def process_example(example_dir: Path, args) -> None:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--input", nargs="+", required=True, help="Example directories.")
+    ap.add_argument("--input", nargs="+", required=True,
+                    help="Example directories; a directory without meta.json expands to the examples inside it.")
     ap.add_argument("--run-name", default=None,
                     help="Prediction to use, <prediction-root>/<example>/<run-name>_prediction.pt "
                          "(as `run_molmo_motion.py --run-name`); also prefixes the outputs.")
@@ -385,10 +399,24 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
-    for i, name in enumerate(args.input, 1):
-        example_dir = Path(name)
-        print(f"[{i}/{len(args.input)}] {example_dir}")
-        process_example(example_dir, args)
+    example_dirs = []
+    for name in map(Path, args.input):
+        example_dirs += [name] if (name / "meta.json").exists() else sorted(
+            d for d in name.iterdir() if (d / "meta.json").exists())
+    failed = []
+    for i, example_dir in enumerate(example_dirs, 1):
+        print(f"[{i}/{len(example_dirs)}] {example_dir}", flush=True)
+        try:
+            process_example(example_dir, args)
+        except Exception:
+            traceback.print_exc()
+            failed.append(example_dir.name)
+        free_gpu()
+    print(f"done: {len(example_dirs) - len(failed)}/{len(example_dirs)} examples")
+    if failed:
+        print("failed: " + ", ".join(failed))
+        if len(failed) == len(example_dirs):
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

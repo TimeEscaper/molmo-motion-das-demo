@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import runpy
 import sys
 from pathlib import Path
 
@@ -49,6 +50,10 @@ from PIL import Image
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 load_dotenv(REPO_ROOT / ".env")
+
+# Track NPZs hold numpy-2 pickles and the venv has numpy 1.26: alias numpy._core (run the
+# module file, not `import molmo_motion...`, which would load the whole package).
+runpy.run_path(str(REPO_ROOT / "src" / "molmo_motion" / "numpy_compat.py"))
 
 DEFAULT_DATA_ROOT = Path(os.environ.get(
     "MOLMO_MOTION_1M_ROOT", "/mnt/vol1/shared/datasets/molmo-motion-1m")) / "molmospaces"
