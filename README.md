@@ -1,631 +1,280 @@
-<div align="center">
-  <h1>MolmoMotion</h1>
-  <h3>Forecasting Point Trajectories in 3D with Language Instruction</h3>
-</div>
+# MolmoMotion × Diffusion as Shader demo
 
-<p align="center">
-  <a href="https://github.com/allenai/molmo-motion/blob/main/LICENSE">
-    <img alt="License" src="https://img.shields.io/badge/license-Apache_2.0-blue.svg">
-  </a>
-  <a href="https://arxiv.org/abs/2606.18558">
-    <img alt="arXiv" src="https://img.shields.io/badge/arXiv-2606.18558-b31b1b.svg">
-  </a>
-  <a href="https://allenai.org/blog/molmo-motion">
-    <img alt="Blog" src="https://img.shields.io/badge/MolmoMotion-blog-F0529C">
-  </a>
-  <a href="https://huggingface.co/collections/allenai/molmomotion">
-    <img alt="Models" src="https://img.shields.io/badge/%F0%9F%A4%97%20HF-Models-yellow">
-  </a>
-  <a href="https://huggingface.co/datasets/allenai/molmo-motion-1m">
-    <img alt="MolmoMotion-1M Dataset" src="https://img.shields.io/badge/%F0%9F%A4%97%20HF-MolmoMotion--1M-yellow">
-  </a>
-  <a href="https://huggingface.co/datasets/allenai/PointMotionBench">
-    <img alt="PointMotionBench" src="https://img.shields.io/badge/%F0%9F%A4%97%20HF-PointMotionBench-yellow">
-  </a>
-</p>
+Forecast 3D point trajectories with **MolmoMotion** and turn them into videos with
+**Diffusion as Shader (DaS)**, on simulated (MolmoSpaces), in-the-wild (YT-VIS, DAVIS) and
+real-robot (ShareRobot) clips. Includes an annotation pipeline that produces MolmoMotion-style
+3D tracks for robot episodes.
 
-<div align="center">
-  <img src="assets/teaser.png" alt="MolmoMotion teaser" width="1200">
-</div>
+This repository is a fork of [allenai/molmo-motion](https://github.com/allenai/molmo-motion).
+The upstream README (training, PointMotionBench evaluation, HF conversion, robotics) is kept as
+[`README_original.md`](README_original.md); everything below describes what this fork adds.
 
-<br>
+## Contents
 
-MolmoMotion is a 4B vision-language model that **forecasts 3D point
-trajectories** under natural-language action instructions. Given a short
-RGB observation history, a set of user-specified 2D query points with their
-initial 3D positions, and a language description of the intended action,
-the model predicts each query point's 3D trajectory for up to ~2 seconds
-in the camera-frame-at-`t₀` coordinate frame. We show that the learned
-motion prior transfers to robotics planning and to motion-guided video
-generation.
+- [Project context](#project-context)
+- [What this fork adds](#what-this-fork-adds)
+- [Environment (uv)](#environment-uv)
+- [Weights](#weights)
+- [Data](#data)
+- [Running the stages](#running-the-stages)
+- [Notes and known limitations](#notes-and-known-limitations)
 
-This repository covers the **autoregressive (AR) variant** from the paper,
-together with the [MolmoMotion-1M](https://huggingface.co/datasets/allenai/molmo-motion-1m)
-training corpus and the [PointMotionBench](https://huggingface.co/datasets/allenai/PointMotionBench)
-evaluation suite. See the [paper](https://arxiv.org/abs/2606.18558) or the
-[blog post](https://allenai.org/blog/molmo-motion) for the full
-methodology and results.
+## Project context
 
-## Table of Contents
-- [Setup](#setup)
-  - [Installation](#installation)
-  - [Downloading the Dataset and Benchmark](#downloading-the-dataset-and-benchmark)
-  - [Downloading Released Models](#downloading-released-models)
-    - [Backbone init for training from scratch](#backbone-init-for-training-from-scratch)
-- [Quick Start](#quick-start)
-- [Data and benchmark construction](#data-and-benchmark-construction)
-- [Training](#training)
-  - [Stage 1 — Pretrain (P=8, H=3, F=8, 40K steps)](#stage-1--pretrain-p8-h3-f8-40k-steps)
-  - [Stage 2 — Long-horizon finetune (10K steps)](#stage-2--long-horizon-finetune-10k-steps)
-- [Evaluation](#evaluation)
-  - [PointMotionBench benchmark eval](#pointmotionbench-benchmark-eval)
-  - [Metric definitions (ADE / FDE / PWT)](#metric-definitions-ade--fde--pwt)
-- [HuggingFace Conversion](#huggingface-conversion)
-- [Robotics: MolmoBot finetuning](#robotics-molmobot-finetuning)
-- [Citation](#citation)
-- [License](#license)
-
-# Setup
-
-## Installation
-
-```bash
-git clone https://github.com/allenai/molmo-motion.git
-cd molmo-motion
-conda create -n molmo-motion python=3.11 -y
-conda activate molmo-motion
-pip install -e .[viz]
-```
-
-> **GPU / driver note.** `pip install` pulls the default PyTorch wheels,
-> which target the newest CUDA runtime and may not match an older driver
-> (`torch.cuda.is_available()` then returns `False`). If so, install a torch
-> build matching your driver from the PyTorch index, e.g. for a CUDA 12.8
-> driver:
-> ```bash
-> pip install "torch==2.9.1" torchvision "torchcodec==0.9.*" \
->     --index-url https://download.pytorch.org/whl/cu128
-> ```
-> `torchcodec` must match the torch minor version (0.9.x ↔ torch 2.9). The
-> video decoder also needs FFmpeg shared libraries on the system
-> (`conda install -c conda-forge ffmpeg`); the bundled training/eval recipes
-> decode with OpenCV and do not require it, but the `torchcodec_exact` path
-> does.
-
-Installation registers three console scripts:
-
-| Command | Purpose |
-|---|---|
-| `molmo-motion-train` | torchrun-compatible YAML-config training driver (the released recipes use `torchrun launch_scripts/sft.py` directly — see [Training](#training)) |
-| `molmo-motion-eval` | torchrun-compatible YAML-config evaluation driver |
-| `molmo-motion-convert-hf` | OLMo-native → HuggingFace checkpoint converter |
-
-## Downloading the Dataset and Benchmark
-
-Training and evaluation read two separate corpora from HuggingFace:
-
-| Path | Used for | HF repo |
+| Component | What it is | Reference |
 |---|---|---|
-| `MOLMO_MOTION_1M_ROOT` | Training | [`allenai/molmo-motion-1m`](https://huggingface.co/datasets/allenai/molmo-motion-1m) |
-| `POINTMOTIONBENCH_ROOT` | Evaluation | [`allenai/PointMotionBench`](https://huggingface.co/datasets/allenai/PointMotionBench) |
-
-Export both before running anything in this README. The two roots must
-point at **new directories outside this repo** — they will be populated
-by `hf download` below. Do not point them at
-[`dataset_recipes/`](dataset_recipes/) or
-[`pointmotionbench/`](pointmotionbench/), which only hold recipes and
-documentation.
-
-```bash
-export MOLMO_MOTION_1M_ROOT=/your/path/to/molmo-motion-1m
-export POINTMOTIONBENCH_ROOT=/your/path/to/PointMotionBench
-```
-
-Download:
-
-```bash
-# Training corpus.
-hf download allenai/molmo-motion-1m \
-    --repo-type dataset --local-dir $MOLMO_MOTION_1M_ROOT
-
-# Evaluation benchmark — only needed for `launch_scripts/eval_pointmotionbench.py`.
-hf download allenai/PointMotionBench \
-    --repo-type dataset --local-dir $POINTMOTIONBENCH_ROOT
-```
-
-Layout after download:
+| **MolmoMotion** | 4B vision-language model that predicts the future 3D trajectories of query points from RGB history frames, the points' 2D/3D positions and a language instruction. We use the released **autoregressive** checkpoints: `H3-F30` (3 history frames, 30 future steps) and `H1-F32` (1 frame, 32 steps). The flow-matching variant of the paper is not released. | arXiv:2606.18558, [`README_original.md`](README_original.md) |
+| **MolmoMotion-1M** | MolmoMotion's training corpus, annotated with the data-generation pipeline in [`data_generation/`](data_generation/). We sample test clips from its **MolmoSpaces** (simulation, fixed cameras) and **YT-VIS** (in the wild, hand-held cameras) subsets. | `allenai/molmo-motion-1m` |
+| **ShareRobot** | Planning data of RoboBrain: 51k successful Open-X-Embodiment robot episodes, 30 frames each, with a goal and sub-steps. It has no 3D tracks, so we annotate episodes ourselves with the (adapted) data-generation pipeline. | arXiv:2502.21257 |
+| **Diffusion as Shader (DaS)** | CogVideoX-5B image-to-video model conditioned on a "3D tracking video" (coloured 3D points of the first frame, moved and projected into every frame) and a text prompt. We build the tracking video from MolmoMotion's prediction. Code: [`das/`](das/) submodule. | arXiv:2501.03847 |
+| **Depth Anything 3 (DA3)** | Metric depth, intrinsics and poses from images; a depth backend of the annotation pipeline and the source of the dense depth DaS needs. | `depth-anything/DA3NESTED-GIANT-LARGE-1.1` |
 
 ```
-$MOLMO_MOTION_1M_ROOT/
-├── egodex/         annotations/  tracks/  camera/
-├── ytvis/          annotations/  tracks/  camera/
-├── hdepic/         annotations/  tracks/  camera/
-├── xperience/      annotations/  tracks/
-├── stereo4d/       annotations/  track_index/
-├── droid/          annotations/  tracks/  camera/    # robot teleop, NOT used by the default recipe
-└── molmospaces/    annotations/  tracks/  camera/  videos/    # sim, NOT used by the default recipe
-
-$POINTMOTIONBENCH_ROOT/
-├── hot3d/
-├── worldtrack/
-└── davis/
+ShareRobot archive ─ extract_sharerobot ─▶ run_pipeline (annotation) ─▶ sample_sharerobot ─┐
+MolmoMotion-1M ───────────────────────────────── sample_molmospaces / sample_ytvis ────────┼─▶ run_molmo_motion ─▶ run_das
+examples/data/davis_bmx_trees_das ─────────────────────────────────────────────────────────┘
 ```
 
-The five datasets above the line are the ones the public training recipe
-uses (see [Training](#training)). DROID and MolmoSpaces ship under the same
-root for users who want to extend the recipe, but the bundled recipe does
-not touch them.
+## What this fork adds
 
-Most datasets ship annotations + tracks + per-frame camera; the raw videos
-(and, per dataset, some derived signals) are license-restricted and are
-reconstructed locally from each subset's original source. Each dataset
-directory on HuggingFace includes its own `README.md` and reconstruction
-script — see [Data and benchmark construction](#data-and-benchmark-construction).
+### New scripts
 
-## Downloading Released Models
-
-All released checkpoints are the **autoregressive (AR) variant** of
-MolmoMotion. 
-
-| Model | History H | Future F | HuggingFace |
-|---|---:|---:|---|
-| **MolmoMotion-4B-H3-F30** | 3 | 30 | [allenai/MolmoMotion-4B-H3-F30](https://huggingface.co/allenai/MolmoMotion-4B-H3-F30) |
-| **MolmoMotion-4B-H1-F32** | 1 | 32 | [allenai/MolmoMotion-4B-H1-F32](https://huggingface.co/allenai/MolmoMotion-4B-H1-F32) |
-
-```bash
-hf download allenai/MolmoMotion-4B-H3-F30 \
-    --local-dir checkpoints/MolmoMotion-4B-H3-F30
-```
-
-Pick H=3 / F=30 for typical video use (3 history frames, predict 2 seconds at
-15 fps). Pick H=1 / F=32 when only a single query keyframe is available.
-
-### Backbone init for training from scratch
-
-Stage-1 training (see [Training](#training)) starts from the
-**`Molmo2-4B-Pretrain`** checkpoint — the pretrain stage of
-[Molmo2](https://github.com/allenai/molmo2), released by Ai2
-alongside the Molmo2 codebase. Download URL is published in the Molmo2 README's
-[Checkpoints table](https://github.com/allenai/molmo2#checkpoints):
-
-```bash
-wget https://storage.googleapis.com/oe-training-public/Molmo2-1225/Molmo2-4B-Pretrain.tar
-tar -xvf Molmo2-4B-Pretrain.tar
-# The extracted folder is what `/path/to/Molmo2-4B-Pretrain` refers to in Stage 1.
-```
-`oe-training-public` is an unauthenticated GCS bucket, so the `wget`
-above works without any `gcloud` credentials.
-
-
-
-# Quick Start
-
-Below we run a single forward pass on a bundled clip and read the
-`(P, F, 3)` future trajectory. Expected wall-clock on a single 80 GB A100:
-~110 s for checkpoint load + ~40 s for `predict_trajectory()`.
-
-For the full runnable script — including rendering the prediction as a 2D-track
-MP4 over the `t₀` frame — see [`examples/01_quickstart.py`](examples/01_quickstart.py)
-(`python examples/01_quickstart.py`, or `--from-prediction` to render from a
-bundled prediction with no GPU). Details in [`examples/README.md`](examples/README.md).
-
-```python
-import torch
-from PIL import Image
-
-from molmo_motion import MolmoMotion, MolmoMotionProcessor
-
-CKPT = "allenai/MolmoMotion-4B-H3-F30"
-
-# 1. Load model + matching processor.
-processor = MolmoMotionProcessor.from_pretrained(CKPT)
-model = MolmoMotion.from_pretrained(CKPT)
-model._internal = model._internal.to(torch.bfloat16).cuda()  # 4B params
-
-# 2. Build one inference example. With the H=3 model:
-#       history_frames        — three PIL images,  ordered earliest → t₀
-#       points_2d_at_t0       — (P, 2) tensor of pixel coords at t₀
-#       points_3d_history     — (H, P, 3) tensor in camera-frame-at-t₀
-#       action                — short action description
-#       future_horizon        — number of future frames to predict
-EXAMPLE_DIR = "examples/data/davis_bmx_trees"
-history_frames = [
-    Image.open(f"{EXAMPLE_DIR}/frame_t-2.jpg").convert("RGB"),
-    Image.open(f"{EXAMPLE_DIR}/frame_t-1.jpg").convert("RGB"),
-    Image.open(f"{EXAMPLE_DIR}/frame_t+0.jpg").convert("RGB"),
-]
-points_2d_at_t0   = torch.load(f"{EXAMPLE_DIR}/points_2d_at_t0.pt")
-points_3d_history = torch.load(f"{EXAMPLE_DIR}/points_3d_history.pt")
-action = open(f"{EXAMPLE_DIR}/caption.txt").read().strip()
-
-inputs = processor(
-    history_frames=history_frames,
-    points_2d_at_t0=points_2d_at_t0,
-    points_3d_history=points_3d_history,
-    action=action,
-    future_horizon=30,
-)
-inputs = {k: v.cuda() if torch.is_tensor(v) else v for k, v in inputs.items()}
-
-# 3. Forward.
-with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-    out = model.predict_trajectory(**inputs)
-
-# 4. `out.future_3d` is the decoded prediction: a (P=8, F=30, 3) tensor of
-#    absolute camera-frame XYZ coordinates in meters, one row per future
-#    frame, for each of the 8 query points (no further parsing needed —
-#    `predict_trajectory` already turned the raw `<tracks>` block into
-#    floats and added the anchor back).
-future_3d = out.future_3d.cpu().numpy()          # (8, 30, 3), meters
-print(f"future_3d.shape: {future_3d.shape}")
-
-# Per-point predicted positions at the first future frame (= t₀ + 1):
-for pi in range(future_3d.shape[0]):
-    x, y, z = future_3d[pi, 0]
-    print(f"  point {pi}: (x={x:+.3f}, y={y:+.3f}, z={z:+.3f}) m")
-
-# Point 0's full predicted trajectory across all 30 future frames:
-print(f"point 0 trajectory (F=30): {future_3d[0].round(3).tolist()}")
-
-# 5. Visualize straight from the prediction with `render_trajectory_mp4`
-#    (defined in examples/01_quickstart.py): a 2D track over the t₀ frame.
-render_trajectory_mp4(
-    out.future_3d,
-    t0_image=history_frames[-1],
-    intrinsics=torch.load(f"{EXAMPLE_DIR}/intrinsics_K.pt"),
-    points_2d_at_t0=points_2d_at_t0,
-    output_path="davis_bmx_trees_2d.mp4",
-)
-```
-
-# Data and benchmark construction
-
-`MOLMO_MOTION_1M_ROOT` and `POINTMOTIONBENCH_ROOT` only land annotations,
-tracks, and (for most datasets) camera when downloaded — the raw videos and
-a few derived signals are license-restricted and rebuilt locally. The
-recipes live in three places; each per-dataset `README.md` is
-**authoritative**.
-
-| Where | What it provides |
+| Script | Purpose |
 |---|---|
-| [`allenai/molmo-motion-1m`](https://huggingface.co/datasets/allenai/molmo-motion-1m) (HF) | Per-dataset reconstruction for `MOLMO_MOTION_1M_ROOT` — each `<dataset>/` ships its `README.md` + `reconstruct_*.py` alongside the annotations (EgoDex, YT-VIS, HD-EPIC, Xperience, Stereo4D, DROID, MolmoSpaces). See [`dataset_recipes/`](dataset_recipes/) for the pointer. |
-| [`pointmotionbench/`](pointmotionbench/) | Per-subset reconstruction for `POINTMOTIONBENCH_ROOT` (DAVIS / HOT3D / WorldTrack) |
-| [`data_generation/`](data_generation/) | The pipeline code that annotates new raw videos with the same 3D track annotation schema |
+| [`scripts/data/extract_sharerobot.py`](scripts/data/extract_sharerobot.py) | Export ShareRobot planning episodes (by name or at random) as `<video_id>.mp4` + `goal.txt` + `episode.json` (goal, sub-steps with frame ranges), streaming the ~320 GB archive once. |
+| [`scripts/data/sample_molmospaces.py`](scripts/data/sample_molmospaces.py), [`scripts/data/sample_ytvis.py`](scripts/data/sample_ytvis.py) | Convert MolmoMotion-1M clips into MolmoMotion inputs: history frames, query points, 3D history, K, caption, ground-truth future, `clip.mp4`. |
+| [`scripts/data/sample_sharerobot.py`](scripts/data/sample_sharerobot.py) | The same for annotated ShareRobot episodes, plus the episode's **init frame** (`frame_init.jpg`, points and K at it), to run the H=1 model from the start of the episode, before the gripper reaches the object. |
+| [`scripts/run_molmo_motion.py`](scripts/run_molmo_motion.py) | Run MolmoMotion (H=1 or H=3) on examples: `prediction.pt`, 2D/3D renders and, with ground truth, ADE / FDE / PWT. `--init-frame` feeds the init frame instead of t0. |
+| [`scripts/run_das.py`](scripts/run_das.py) | MolmoMotion prediction → DaS: DA3 depth (scaled to the query points), SAM 3 object mask (query points + optional extra clicks), sparse SpaTracker-style tracking video, DaS generation, plus the real clip for comparison. |
+| [`data_generation/scripts/click_query_points.py`](data_generation/scripts/click_query_points.py) | Click query points by hand (needs a GUI OpenCV); `--episodes` writes them into the episode folders. |
+| [`data_generation/scripts/visualize_tracks.py`](data_generation/scripts/visualize_tracks.py) | MP4 of an annotated video: 2D tracks over the video + 3D trajectories (also run automatically as stage 7). |
 
-After following the per-dataset READMEs (reconstruction adds `videos/`
-and, per dataset, the remaining derived signals), the two roots look like:
+### Changes to the data-generation pipeline ([`data_generation/run_pipeline.py`](data_generation/run_pipeline.py))
 
-```
-$MOLMO_MOTION_1M_ROOT/
-├── egodex/         annotations/  tracks/  camera/  videos/
-├── ytvis/          ...
-├── hdepic/         ...
-├── xperience/      ...
-├── stereo4d/       ...
-├── droid/          ...
-└── molmospaces/    ...
+- **Episode folders as input** (`--episodes`), as written by `extract_sharerobot.py`; the goal is the action.
+- **Query points:** `--query_points auto` (default; Qwen3 → MolmoPoint → SAM 3 → K-means) or `manual` (clicked points from each episode's `query_points/`).
+- **Fixed camera** (`static_camera: true`): depth and intrinsics are kept, poses become identity. With ViPE, pair it with `vipe_pipeline: static_camera` (frozen intrinsics, [`static_camera.yaml`](data_generation/third_party/vipe/configs/pipeline/static_camera.yaml)).
+- **Depth backends** (`depth_backend: vipe | da3`): Depth Anything 3 as an alternative to ViPE; both write the same files.
+- **Manipulated object only** (`keep_objects: first | moving | all`): grounding may name more objects than are moved (e.g. the destination). Objects that do not move — and with `first`, all but the first moving one in grounding order — are removed from every output.
+- **One folder per video**, keeping only what is used, self-contained (`meta.json` with the action and the episode, a copy of the video, `config.yaml` of the run).
+- **Stage 7: visualization** (`viz.mp4`) by default; `encode_480p: false` keeps the native resolution and frame rate.
+- **New configs:** [`robot_static.yaml`](data_generation/configs/robot_static.yaml), [`sharerobot_static.yaml`](data_generation/configs/sharerobot_static.yaml) (ViPE), [`sharerobot_static_da3.yaml`](data_generation/configs/sharerobot_static_da3.yaml) (DA3).
 
-$POINTMOTIONBENCH_ROOT/
-├── davis/
-├── hot3d/
-└── worldtrack/
-```
+Details: [`data_generation/README.md`](data_generation/README.md).
 
-Training reads from `$MOLMO_MOTION_1M_ROOT`; eval reads from
-`$POINTMOTIONBENCH_ROOT`. No glue beyond setting the env vars.
+### Other changes
 
-> **Stereo4D heads-up.** The HuggingFace download ships only a `track_index/`
-> for Stereo4D; `tracks/` and `camera/` are both rebuilt locally. Run
-> `$MOLMO_MOTION_1M_ROOT/stereo4d/reconstruct_tracks.py` (per
-> `stereo4d/README.md`) before `scripts/build_track_keys_cache.py`,
-> otherwise the cache builder reports all 23,011 Stereo4D entries as
-> missing NPZs.
+- [`examples/data/davis_bmx_trees_das/`](examples/data/davis_bmx_trees_das/): a copy of `davis_bmx_trees` with a **corrected K** and a mask hint.
+  - The bundled principal point put the 3D points ~53 px off their 2D query points; the fix brings that to 0.3 px.
+  - `mask_points.json` holds a click on the bike, which SAM segments separately from the rider.
+- [`src/molmo_motion/numpy_compat.py`](src/molmo_motion/numpy_compat.py), and `np.bool` → `np.bool_` in `preprocessing/multimodal_collator.py`: the code and the MolmoMotion-1M NPZ pickles assume numpy 2, while the venv needs numpy 1.26 (DA3).
+- [`das/`](das/): DiffusionAsShader as a git submodule (only its CogVideoX tracking model is used).
+- [`pyproject.toml`](pyproject.toml) / `uv.lock`: one uv environment for everything (below).
 
-# Training
+## Environment (uv)
 
-MolmoMotion is trained in **two stages**. Both stages share the public
-training mix — the five human-video datasets in MolmoMotion-1M
-(EgoDex, YT-VIS, HD-EPIC, Xperience, Stereo4D); DROID and MolmoSpaces are
-excluded by default. Both stages start from a **Molmo2-4B-Pretrain**
-checkpoint as the VLM backbone.
-
-We assume the corpus is downloaded as described in
-[Downloading the Dataset and Benchmark](#downloading-the-dataset-and-benchmark)
-and the env vars are exported.
+Everything runs in **one** project venv (`.venv/`, Python 3.12, PyTorch 2.9.1 + CUDA 12.8), managed with [uv](https://docs.astral.sh/uv/): MolmoMotion, the data-generation pipeline (ViPE, SAM 3, AllTracker, MolmoPoint), Depth Anything 3 and DaS.
 
 ```bash
-export MOLMO_MOTION_1M_ROOT=/your/path/to/molmo-motion-1m
-export POINTMOTIONBENCH_ROOT=/your/path/to/PointMotionBench
+git clone --recurse-submodules <this repo> molmo-motion-das-demo
+cd molmo-motion-das-demo            # (for an existing clone: git submodule update --init)
+uv sync                             # creates .venv from uv.lock
+source .venv/bin/activate           # or prefix commands with .venv/bin/python
 ```
 
-Before the first run, build the track-keys cache (a one-time scan that
-lets the loader drop split entries whose NPZ keys diverged upstream):
+**Requirements:**
+- Linux and an NVIDIA GPU. We used 80 GB; DaS alone needs ~32 GB.
+- CUDA 12.x `nvcc` on `PATH`: ViPE builds a CUDA extension during `uv sync`. It is installed editable and without build isolation, so it finds its configs.
 
-```bash
-python scripts/build_track_keys_cache.py
-```
+**Pins and why** (`pyproject.toml`):
 
-The training recipes log to [Weights & Biases](https://wandb.ai), so export
-your project and entity before launching (the run aborts with an error if
-either is unset):
-
-```bash
-export WANDB_PROJECT=molmo-motion
-export WANDB_ENTITY=<your-wandb-entity>
-# or disable logging entirely:  export WANDB_MODE=disabled
-```
-
-## Stage 1 — Pretrain (P=8, H=3, F=8, 40K steps)
-
-Train on the five human-video datasets with sqrt-frequency mixing
-(`p_i ∝ √N_i`) — this is the recipe the released `H3-Pretrain` model uses.
-
-```bash
-torchrun --nproc-per-node=8 launch_scripts/sft.py \
-    /path/to/Molmo2-4B-Pretrain \
-    trajectory_3d_human_p8_h3_f8 \
-    --save_folder=checkpoints/MolmoMotion-Stage1 \
-    --model.mm_preprocessor.video.max_frames=3 \
-    --model.mm_preprocessor.image.max_crops=1 \
-    --seq_len=2560 \
-    --model.llm.max_sequence_length=2560 \
-    --device_batch_size=2 \
-    --max_duration=40000 \
-    --save_interval=2000 \
-    --eval_interval=5000
-```
-
-Recipe summary:
-
-| Field | Value |
+| Pin | Why |
 |---|---|
-| Backbone init | `Molmo2-4B-Pretrain` |
-| Dataset name | `trajectory_3d_human_p8_h3_f8` |
-| Datasets in mix | egodex, ytvis, hepic, xperience, stereo4d |
-| Mixing | sqrt-frequency |
-| Points P | 8 |
-| History H | 3 |
-| Future F | 8 |
-| Steps | 40,000 |
-| Compute (released) | 16 GPUs (2 nodes × 8 GPUs) |
-| Seq-len | 2560 |
-| Precision | bf16 + FSDP2 |
+| `numpy==1.26.0` | Depth Anything 3 requires `numpy<2` |
+| `transformers==4.57.1` | MolmoPoint/Molmo2 grounding and ViPE's GroundingDINO break on 5.x |
+| `diffusers==0.33.1`, `sentencepiece` | DaS (CogVideoX tracking pipeline) |
+| `gdown<6` | ViPE's checkpoint download uses `fuzzy=` |
+| `depth-anything-3` | installed from a pinned GitHub source archive, because cloning through our proxy fails |
+| `addict` | an undeclared Depth Anything 3 dependency |
 
-The `_human` token expands to the 5-dataset mix above. To train on a custom
-subset, list datasets explicitly:
+**Notes:**
+- **SAM 3** is imported from [`data_generation/third_party/sam3`](data_generation/third_party/sam3); the scripts put it on `sys.path`, since the installed copy is incomplete.
+- **GUI tools:** the venv ships `opencv-python-headless`, so `click_query_points.py` needs a GUI OpenCV build and a display.
+
+**Environment variables:** create `.env` in the repo root (read by the data scripts):
 
 ```bash
-# egodex only
-trajectory_3d_egodex_p8_h3_f8
-# 3-dataset ablation
-trajectory_3d_egodex_xperience_hepic_p8_h3_f8
+MOLMO_MOTION_1M_ROOT=/path/to/molmo-motion-1m
+SHAREROBOT_ROOT=/path/to/ShareRobot/ShareRobot
 ```
 
-## Stage 2 — Long-horizon finetune (10K steps)
+Optionally set `HF_HOME` / `TORCH_HOME` for the model caches.
 
-Continue from the Stage-1 checkpoint with a longer future horizon. Two
-flavors are released, differing only in the history length:
+## Weights
+
+The scripts load the checkpoints from two places by default:
+- **MolmoMotion:** `weights/` (gitignored).
+- **DaS:** `das/checkpoints/`, the DaS repo's own convention (ignored by the submodule's git).
+
+Download them, or link existing copies:
 
 ```bash
-# H=3, F=30 (typical 3-frame video setting)
-torchrun --nproc-per-node=8 launch_scripts/sft.py \
-    checkpoints/MolmoMotion-Stage1/step40000 \
-    trajectory_3d_human_p8_h3_f30 \
-    --save_folder=checkpoints/MolmoMotion-H3-F30 \
-    --model.mm_preprocessor.video.max_frames=3 \
-    --model.mm_preprocessor.image.max_crops=1 \
-    --seq_len=6144 \
-    --model.llm.max_sequence_length=6144 \
-    --device_batch_size=2 \
-    --max_duration=10000 \
-    --save_interval=1000 \
-    --eval_interval=2500
-
-# H=1, F=32 (single-keyframe setting)
-torchrun --nproc-per-node=8 launch_scripts/sft.py \
-    checkpoints/MolmoMotion-Stage1/step40000 \
-    trajectory_3d_human_p8_h1_f32 \
-    --save_folder=checkpoints/MolmoMotion-H1-F32 \
-    --model.mm_preprocessor.video.max_frames=1 \
-    --model.mm_preprocessor.image.max_crops=1 \
-    --seq_len=6144 \
-    --model.llm.max_sequence_length=6144 \
-    --device_batch_size=2 \
-    --max_duration=10000 \
-    --save_interval=1000 \
-    --eval_interval=2500
+mkdir -p weights
+hf download allenai/MolmoMotion-4B-H3-F30 --local-dir weights/MolmoMotion-4B-H3-F30
+hf download allenai/MolmoMotion-4B-H1-F32 --local-dir weights/MolmoMotion-4B-H1-F32
+hf download EXCAI/Diffusion-As-Shader     --local-dir das/checkpoints/Diffusion-As-Shader   # ~25 GB
+# or link existing copies, e.g.
+# ln -s /mnt/vol1/shared/weights/molmo-motion/MolmoMotion-4B-H3-F30 weights/MolmoMotion-4B-H3-F30
+# ln -s /path/to/DiffusionAsShader/checkpoints das/checkpoints
 ```
 
-Stage 2 uses the **same five-dataset mix** as Stage 1; only the future
-horizon F and (for the H=1 variant) the history length H change. Every
-annotated clip in the five datasets contributes to training — there is no
-held-out human-corpus split. Evaluation is run separately on
-[PointMotionBench](#evaluation), which never overlaps with training data.
+`run_das.py --checkpoint` points DaS elsewhere.
 
-# Evaluation
+These download automatically into the Hugging Face / torch caches on first use:
 
-We evaluate on **PointMotionBench** (HOT3D + WorldTrack + DAVIS) following
-the same setup as the paper:
+| Model | Used by | Note |
+|---|---|---|
+| `depth-anything/DA3NESTED-GIANT-LARGE-1.1` | annotation (`depth_backend: da3`), `run_das.py` | CC BY-NC 4.0 weights |
+| `facebook/sam3` | annotation stage 1, `run_das.py` | **gated**: request access on Hugging Face, then `hf auth login` (or set `HF_TOKEN`) |
+| `allenai/MolmoPoint-Vid-4B`, `allenai/Molmo2-8B`, `Qwen/Qwen3-0.6B` | annotation stage 1 (automatic query points) | ~56 GB |
+| ViPE priors, AllTracker | annotation stages 2–3 | torch hub |
 
-- Predict future motion for up to **2 seconds at 15 fps** (F=30) — or F=32
-  for the H=1 release.
-- If the clip is shorter, evaluate only on the valid future frames.
-- Use **all annotated query points per clip** (not just 8): the model
-  predicts in `P=8` chunks, with metrics averaged across all points so
-  the comparison is fair across model sizes.
-- Best-of-1 deterministic decoding (greedy) by default; the paper reports
-  best-of-5 numbers, see `--n_samples=5` to reproduce.
+## Data
 
-## PointMotionBench benchmark eval
+| Data | Needed for | Preparation |
+|---|---|---|
+| MolmoMotion-1M (`molmospaces/`, `ytvis/`) | `sample_molmospaces.py`, `sample_ytvis.py` | `hf download allenai/molmo-motion-1m --repo-type dataset --local-dir $MOLMO_MOTION_1M_ROOT`, then rebuild the videos with each subset's reconstruction script (see [`README_original.md`](README_original.md#downloading-the-dataset-and-benchmark)) |
+| ShareRobot | `extract_sharerobot.py` | `hf download BAAI/ShareRobot --repo-type dataset --local-dir <dir>`; set `SHAREROBOT_ROOT` to the folder containing `planning/`, which holds the `train/` and `test/` JSONs and `images/rt_frames_success.tar.gz.part.*` (~320 GB) |
+| DAVIS BMX | `run_molmo_motion.py`, `run_das.py` | bundled: [`examples/data/davis_bmx_trees_das/`](examples/data/davis_bmx_trees_das/) |
 
-`launch_scripts/eval_pointmotionbench.py` is single-rank — its inner
-`full_rollout` driver does not shard configs across ranks. Run with
-`--nproc-per-node=1` and one inference GPU; one full run is ~9 GPU-hours
-total for both checkpoints across all three subsets at the default
-`--max_points_per_clip 24` recipe.
+## Running the stages
+
+All commands run from the repository root with the venv active; the annotation pipeline runs from `data_generation/`. Outputs go to `result/` (gitignored):
+
+```
+result/
+├── sharerobot_raw/<episode>/                                1. extracted ShareRobot episodes
+├── sharerobot_annotated/<video_id>/                         2. annotated episodes (3D tracks, camera, depth, viz)
+├── molmo_motion_input/<dataset>/<example>/                  3. MolmoMotion inputs
+├── molmo_motion_prediction/<dataset>/<setting>/<example>/   4. predictions (+ metrics)
+└── das/<dataset>/<setting>/<example>/                       5. DaS videos
+```
+
+### 1. Extract ShareRobot episodes
 
 ```bash
-# H=3, F=30 model
-torchrun --nproc-per-node=1 launch_scripts/eval_pointmotionbench.py \
-    checkpoints/MolmoMotion-4B-H3-F30 \
-    --benchmarks hot3d,worldtrack,davis \
-    --all_points \
-    --fixed_t0 \
-    --history 3 --future 30 \
-    --output_dir eval_out/MolmoMotion-4B-H3-F30
-
-# H=1, F=32 model
-torchrun --nproc-per-node=1 launch_scripts/eval_pointmotionbench.py \
-    checkpoints/MolmoMotion-4B-H1-F32 \
-    --benchmarks hot3d,worldtrack,davis \
-    --all_points \
-    --fixed_t0 \
-    --history 1 --future 32 \
-    --output_dir eval_out/MolmoMotion-4B-H1-F32
+python scripts/data/extract_sharerobot.py --video bridge_3715 bridge_7119 bridge_18068
+# or random ones from one source dataset:
+python scripts/data/extract_sharerobot.py --num_videos 5 --dataset bridge --seed 1
 ```
 
-Flag semantics:
+- **Output:** `result/sharerobot_raw/<episode>/{<video_id>.mp4, goal.txt, episode.json}`: 30 frames at 4 fps.
+- **Speed:** bridge episodes come first in the archive and are found quickly; a full pass over the archive takes ~25 min.
 
-| Flag | Meaning |
+### 2. Annotate them (3D tracks)
+
+```bash
+cd data_generation
+# Depth Anything 3 + fixed camera (used for our results)
+python run_pipeline.py --episodes ../result/sharerobot_raw \
+    --config configs/sharerobot_static_da3.yaml --work_dir ../result/sharerobot_annotated
+# ViPE + fixed camera instead
+python run_pipeline.py --episodes ../result/sharerobot_raw \
+    --config configs/sharerobot_static.yaml --work_dir ../result/sharerobot_annotated_vipe
+cd ..
+```
+
+- **Output, per video** (`<work_dir>/<video_id>/`): `meta.json`, `video.mp4`, `query_points/`, `depth.zip`, `camera/{intrinsics,pose}.npz`, `tracks_2d.npz`, `tracks_3d.npz`, `final_tracks/`, `clips.json`, `viz.mp4`.
+- **Speed:** ~1.5 min per episode once the grounding models are loaded.
+- **Caching:** every stage caches its output; `--start_stage N` re-runs from a given stage.
+
+Manual query points instead of automatic grounding:
+
+```bash
+python data_generation/scripts/click_query_points.py --episodes result/sharerobot_raw   # needs a GUI
+cd data_generation && python run_pipeline.py --episodes ../result/sharerobot_raw \
+    --config configs/sharerobot_static_da3.yaml --query_points manual --work_dir ../result/sharerobot_manual
+```
+
+### 3. Build MolmoMotion inputs
+
+```bash
+python scripts/data/sample_molmospaces.py --video pick_place_2cam_randomized__house_717__00000004__exo_camera_1 --stride 2
+python scripts/data/sample_molmospaces.py --video pick_place_color_5cam__house_6031__00000013__droid_shoulder_light_randomization
+python scripts/data/sample_ytvis.py --video aef3e2cb0e --offset 8
+python scripts/data/sample_ytvis.py --video b673e7dcfb --offset 10
+python scripts/data/sample_sharerobot.py --num_videos 3 --data_root result/sharerobot_annotated
+```
+
+- **Output:** each writes `result/molmo_motion_input/<dataset>/<dataset>_<video>/`.
+- **Random sampling:** all three scripts take `--num_videos N --seed S`.
+- **ShareRobot options:** `sample_sharerobot.py` also takes `--init_frame` (default 0), `--caption goal|step`, `--t0` and `--tag`.
+
+### 4. Run MolmoMotion
+
+One folder per dataset and setting: `h1`, `h3`, and for ShareRobot also `h1_init`.
+
+```bash
+for ds in molmospaces ytvis sharerobot; do
+  for h in 1 3; do
+    python scripts/run_molmo_motion.py --input result/molmo_motion_input/$ds --history $h \
+        --output result/molmo_motion_prediction/$ds/h$h
+  done
+done
+python scripts/run_molmo_motion.py --input result/molmo_motion_input/sharerobot --history 1 --init-frame \
+    --output result/molmo_motion_prediction/sharerobot/h1_init
+# DAVIS BMX (bundled example, no ground truth)
+for h in 1 3; do
+  python scripts/run_molmo_motion.py --input examples/data/davis_bmx_trees_das --history $h \
+      --output result/molmo_motion_prediction/davis/h$h
+done
+```
+
+- **Output, per example:** `prediction.pt` (P × F × 3, camera frame at t0, metres), `2d.gif`, `3d.png`. With ground truth, also `side_by_side.gif` and `metrics.json` (ADE / FDE / PWT).
+- **Inputs:** `--input` takes example folders, or a folder of examples.
+- **Naming:** `--run-name` prefixes the files instead of using separate folders.
+- **Speed:** each call loads the model once (~2 min).
+
+### 5. Generate videos with DaS
+
+```bash
+for ds in molmospaces ytvis sharerobot; do
+  for s in h1 h3; do
+    python scripts/run_das.py --input result/molmo_motion_input/$ds \
+        --prediction-root result/molmo_motion_prediction/$ds/$s --output result/das/$ds/$s
+  done
+done
+python scripts/run_das.py --input result/molmo_motion_input/sharerobot --init-frame \
+    --prediction-root result/molmo_motion_prediction/sharerobot/h1_init --output result/das/sharerobot/h1_init
+for s in h1 h3; do
+  python scripts/run_das.py --input examples/data/davis_bmx_trees_das \
+      --prediction-root result/molmo_motion_prediction/davis/$s --output result/das/davis/$s
+done
+```
+
+Output, per example:
+
+| File | Contents |
 |---|---|
-| `--all_points` | Don't sub-sample 8 query points per clip — chunk every visible point into groups of P=8 and average the metric across chunks. |
-| `--max_points_per_clip 24` | Cap the per-clip visible-point pool *before* chunking, so each clip emits at most ⌈24 / P⌉ = 3 records. Matches the paper recipe; pass `0` to chunk every visible point (much slower; drifts from paper numbers). |
-| `--fixed_t0` | Pin the query frame at `t = H − 1` so eval is deterministic across runs. Without this, `t₀` is randomized per clip. |
+| `tracking.mp4` | the DaS conditioning video |
+| `tracking_overlay.mp4` | the tracking video over the input frame, with the query tracks |
+| `mask_overlay.png` | the object mask on the input frame |
+| `result.mp4` | 49 generated frames, re-timed to the prediction |
+| `comparison.mp4` | tracking overlay \| result |
+| `original.mp4` | the real clip, where the example has one |
+| `das.json` | parameters and diagnostics |
 
-Output:
+- **Speed:** about 6 min per example on an A100; the DaS pipeline is loaded once per call.
+- **Useful options:**
+  - `--prompt` (default: the example's caption, i.e. the ShareRobot goal);
+  - `--mask-points "x,y;..."` (extra SAM clicks; default: the example's `mask_points.json`);
+  - `--no-fill-background`, `--steps`, `--seed`.
 
-```
-eval_out/MolmoMotion-4B-H3-F30/
-├── hot3d/
-│   ├── predictions.jsonl       # one JSON record per (video, obj, t0, batch) — gt_future_raw / pred_raw_combined / gt_future_vis / point_indices / caption / …
-│   └── metrics.json            # ADE / FDE / PWT aggregates
-├── worldtrack/…
-├── davis/…
-└── summary.json                # one-page rollup
-```
+## Notes and known limitations
 
-`summary.json` reproduces the table format used in the paper:
-
-```json
-{
-  "hot3d":      {"ADE": 0.109, "FDE": 0.217, "PWT": 0.444, "n_clips": 2475},
-  "worldtrack": {"ADE": 0.143, "FDE": 0.261, "PWT": 0.445, "n_clips":  155},
-  "davis":      {"ADE": 1.227, "FDE": 2.108, "PWT": 0.153, "n_clips":   90}
-}
-```
-
-## Metric definitions (ADE / FDE / PWT)
-
-All three are computed in 3D camera-frame meters and restricted to
-visibility-masked frames (padded futures for short clips are excluded).
-
-- **ADE** (Average Displacement Error, ↓) — mean L2 error across all
-  visible query points and all predicted timesteps:
-  `ADE = mean_{n,t}( ||p̂_t^n − p_t^n||_2 )`
-- **FDE** (Final Displacement Error, ↓) — L2 error at the final
-  predicted timestep:
-  `FDE = mean_n( ||p̂_T^n − p_T^n||_2 )`
-- **PWT** (Points Within Threshold, ↑) — average fraction of predicted
-  points within `{0.01, 0.02, 0.05, 0.10, 0.20}` meters of ground truth,
-  averaged across thresholds:
-  `PWT = mean_{n,t,τ}( ||p̂_t^n − p_t^n||_2 ≤ τ )`
-
-<div align="center">
-  <img src="assets/qualitative_examples.png" alt="Qualitative trajectory predictions" width="1200">
-  <br>
-  <em>Predicted 3D point trajectories on PointMotionBench across diverse
-  motion patterns and language instructions. See Section 4 of the
-  <a href="https://arxiv.org/abs/2606.18558">paper</a> for the full quantitative
-  comparison.</em>
-</div>
-
-<br>
-
-# HuggingFace Conversion
-
-Convert an OLMo-native unsharded checkpoint into a
-`AutoModelForImageTextToText`-loadable HF directory:
-
-```bash
-molmo-motion-convert-hf \
-    checkpoints/MolmoMotion-H3-F30/step10000-unsharded \
-    hf_export/MolmoMotion-H3-F30 \
-    --use_bfloat16
-```
-
-This produces:
-
-```
-hf_export/MolmoMotion-H3-F30/
-├── config.json
-├── generation_config.json
-├── model-00001-of-00002.safetensors
-├── model-00002-of-00002.safetensors
-├── model.safetensors.index.json
-├── modeling_molmo_motion.py        # bundled for `trust_remote_code=True`
-├── configuration_molmo_motion.py
-├── processing_molmo_motion.py
-├── image_processing_molmo_motion.py
-├── video_processing_molmo_motion.py
-├── preprocessor_config.json
-├── tokenizer_config.json
-└── ...                              # tokenizer files
-```
-
-Push:
-
-```bash
-hf upload allenai/MolmoMotion-4B-H3-F30 \
-    hf_export/MolmoMotion-H3-F30 .
-```
-
-# Robotics: MolmoBot finetuning
-
-Use a MolmoMotion checkpoint as the initialization for a
-[MolmoBot](https://github.com/allenai/molmobot) manipulation policy and
-evaluate it on the
-[MolmoSpaces](https://github.com/allenai/molmospaces) Franka pick-and-
-place benchmark. The [`robotics/`](robotics/) subdirectory contains the
-recipe.
-See [`robotics/README.md`](robotics/README.md) for the full walkthrough.
-
-# Acknowledgements
-
-MolmoMotion is trained on [MolmoMotion-1M](https://huggingface.co/datasets/allenai/molmo-motion-1m),
-which includes data derived from the
-[Xperience](https://huggingface.co/datasets/ropedia-ai/xperience-10m) dataset. We thank
-[Ropedia](https://huggingface.co/ropedia-ai) for Xperience.
-
-**Disclaimer:** The Xperience-derived data is subject to Ropedia's terms and conditions.
-Users who access or reconstruct that portion of the data must review and comply with the
-terms on the [Xperience dataset page](https://huggingface.co/datasets/ropedia-ai/xperience-10m).
-
-# Citation
-
-```bibtex
-@article{zhang2026molmomotion,
-    title         = {MolmoMotion: Forecasting Point Trajectories in 3D with Language Instruction},
-    author        = {Zhang, Jianing and Zheng, Chenhao and Yang, Yajun and Argus, Max and Soraki, Rustin and Han, Winson and Anderson, Taira and Li, Chun-Liang and Liu, Shuo and Duan, Jiafei and Ren, Zhongzheng and Zhang, Jieyu and Krishna, Ranjay},
-    journal       = {arXiv preprint arXiv:2606.18558},
-    year          = {2026},
-    archivePrefix = {arXiv},
-    eprint        = {2606.18558},
-    primaryClass  = {cs.CV},
-    url           = {https://arxiv.org/abs/2606.18558},
-}
-```
-
-# License
-
-Code: Apache 2.0. Trained model weights: Apache 2.0. Datasets carry
-their respective upstream licenses — see the per-dataset README inside
-[allenai/molmo-motion-1m](https://huggingface.co/datasets/allenai/molmo-motion-1m)
-and [allenai/PointMotionBench](https://huggingface.co/datasets/allenai/PointMotionBench).
-
-The vendored third-party models under
-[`data_generation/third_party/`](data_generation/third_party/) carry their
-own licenses, which are **not** all Apache 2.0: SAM 3 ships under Meta's
-SAM License, and ViPE's dependency stack includes UniDepth under
-CC BY-NC 4.0 (non-commercial). See the LICENSE / THIRD_PARTY_LICENSES
-files in each vendored directory before commercial use of the
-data-generation pipeline.
+- **DaS assumes a fixed camera:** the background of the tracking video never moves. For hand-held clips (YT-VIS), the generated video shows the object's predicted motion in front of a static background.
+- **The robot arm** is not among the moved points in ShareRobot clips; only the manipulated object is. DaS, trained on human and Mixamo videos, tends to erase or replace the arm. The next things to try are adding the gripper with `--mask-points`, or a prompt that mentions the robot.
+- **Small objects** get few tiles in the sparse 70 × 70 tracking grid (e.g. ~45 for the croissant), which weakens the motion signal for DaS. The sparse grid is used anyway: the dense per-pixel rendering made DaS pan the camera, or paint a "ghost" object into the uncovered area.
+- **Intrinsics must match the query points:** `run_das.py` reports the reprojection error and warns above 2 px. The bundled `davis_bmx_trees` example has a wrong principal point; use `davis_bmx_trees_das`.
+- **Frame rates:** ShareRobot episodes are ~4 fps, while MolmoMotion's steps are treated as 15 fps when re-timing the DaS output; `original.mp4` keeps the source rate.
+- **Determinism:** MolmoMotion decodes greedily, so identical inputs give identical predictions. Annotation (grounding, ViPE / DA3) varies slightly between runs, so re-annotated episodes can select different query points.

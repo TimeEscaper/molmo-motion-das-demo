@@ -18,7 +18,7 @@ camera coordinates. Per example this script:
   4. Tracking video like DaS's real-video training data: SpaTracker's 70x70 grid of points,
      each a ~7x5 rectangle with black gaps, nearer points on top. Static points behind the
      object (inpainted depth) fill the area it uncovers (`--no-fill-background` to drop).
-  5. DaS (CogVideoX-5B I2V + tracking ControlNet, `weights/Diffusion-As-Shader`) on the
+  5. DaS (CogVideoX-5B I2V + tracking ControlNet, `das/checkpoints/Diffusion-As-Shader`) on the
      input frame, the caption and the tracking video.
 
 The intrinsics must match the query points (the 3D points must project onto the 2D ones);
@@ -37,7 +37,9 @@ Run::
 Output, in ``<output>/<example>/`` (default ``result/das/``), prefixed with the run name:
 ``tracking.mp4`` (the DaS tracking video), ``tracking_overlay.mp4`` (blended over the input
 frame + the query tracks), ``mask_overlay.png``, ``result.mp4`` (the generated video, re-timed
-to the prediction's rate), ``comparison.mp4`` (tracking overlay | result) and ``das.json``.
+to the prediction's rate), ``comparison.mp4`` (tracking overlay | result), ``das.json`` and
+``original.mp4``: the real video, i.e. the example's ``clip.mp4`` (history + future around t0) or,
+with ``--init-frame``, the whole source episode; missing for examples without a video.
 """
 
 from __future__ import annotations
@@ -312,6 +314,22 @@ def das_generate(checkpoint: Path, image: Image.Image, prompt: str, tracking: np
 
 # ──────────────────────────────────────────────────────────────────────────
 
+def copy_original(example_dir: Path, dst: Path, init_frame: bool) -> Path | None:
+    """The real video next to the generated one: the example's clip.mp4 (history + future
+    around t0), or with `init_frame` the whole source episode (it starts at the init frame).
+    None if the example has neither (e.g. the bundled DAVIS clips ship only frames)."""
+    import shutil
+
+    src = example_dir / "clip.mp4"
+    if init_frame:
+        meta = json.loads((example_dir / "meta.json").read_text())
+        src = Path(meta.get("data_root", "")) / meta.get("video", "") / "video.mp4"
+    if not src.is_file():
+        return None
+    shutil.copy2(src, dst)
+    return src
+
+
 def process_example(example_dir: Path, args) -> None:
     prefix = f"{args.run_name}_" if args.run_name else ""
     prediction = Path(args.prediction_root) / example_dir.name / f"{prefix}prediction.pt"
@@ -368,7 +386,9 @@ def process_example(example_dir: Path, args) -> None:
         "das": {"checkpoint": str(args.checkpoint), "steps": args.steps,
                 "guidance_scale": args.guidance_scale, "seed": args.seed},
     }, indent=2) + "\n")
-    print(f"  wrote {out('result.mp4')}, {out('comparison.mp4')}")
+    original = copy_original(example_dir, out("original.mp4"), args.init_frame)
+    print(f"  wrote {out('result.mp4')}, {out('comparison.mp4')}"
+          + (f", original.mp4 (from {original})" if original else " (no original video in the example)"))
 
 
 def main():
@@ -393,7 +413,8 @@ def main():
     ap.add_argument("--model-fps", type=float, default=15.0, help="Frame rate of the prediction steps.")
     ap.add_argument("--da3-model", default="depth-anything/DA3NESTED-GIANT-LARGE-1.1")
     ap.add_argument("--da3-process-res", type=int, default=504)
-    ap.add_argument("--checkpoint", default=str(_REPO_ROOT / "weights" / "Diffusion-As-Shader"))
+    ap.add_argument("--checkpoint", default=str(_REPO_ROOT / "das" / "checkpoints" / "Diffusion-As-Shader"),
+                    help="DaS checkpoint (DaS's convention: das/checkpoints/Diffusion-As-Shader).")
     ap.add_argument("--steps", type=int, default=50, help="DaS denoising steps.")
     ap.add_argument("--guidance-scale", type=float, default=6.0)
     ap.add_argument("--seed", type=int, default=42)

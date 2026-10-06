@@ -18,7 +18,7 @@ Single end-to-end script:
      image; with ground truth, the GT trajectory gets its own 3D panel next to
      the prediction (same axis limits).
   6. With ground truth (``gt_future_3d.pt`` + ``clip.mp4``, written by the
-     ``scripts/prepare_*_example.py`` converters), also render prediction |
+     ``scripts/data/sample_*.py`` converters), also render prediction |
      ground truth | original video side by side. On by default; silently
      skipped for examples without ground truth.
   7. With ground truth, compute ADE / FDE / PWT as defined in the paper
@@ -27,25 +27,25 @@ Single end-to-end script:
 Run (needs a GPU for the 4B model)::
 
     pip install -e ".[viz]"
-    python examples/01_quickstart.py
+    python scripts/run_molmo_motion.py
 
 Several examples in one run (names under examples/data/ or paths; a directory
 without meta.json is expanded to all example sub-directories inside it)::
 
-    python examples/01_quickstart.py --input davis_bmx_trees davis_flamingo new/ytvis_29f2332d30
-    python examples/01_quickstart.py --input new
-    python examples/01_quickstart.py --input 'new/ytvis_*' 'molmospaces_*_stride2'
+    python scripts/run_molmo_motion.py --input davis_bmx_trees davis_flamingo new/ytvis_29f2332d30
+    python scripts/run_molmo_motion.py --input new
+    python scripts/run_molmo_motion.py --input 'new/ytvis_*' 'molmospaces_*_stride2'
 
 Use the single-frame model (H=1, F=32; conditioned only on the t_0 frame and
 the t_0 3D points)::
 
-    python examples/01_quickstart.py --history 1
+    python scripts/run_molmo_motion.py --history 1
 
 No GPU? Render the visualizations from the bundled released-model prediction
 instead -- this exercises the exact same visualization paths on identical
 arrays::
 
-    python examples/01_quickstart.py --from-prediction
+    python scripts/run_molmo_motion.py --from-prediction
 
 Output, in ``<output>/<input folder name>/`` (``--output`` defaults to ``result/molmo_motion_prediction/``):
 ``prediction.pt`` (the ``(P, F, 3)`` prediction), ``2d.gif``, ``3d.png`` and,
@@ -668,7 +668,7 @@ def load_example(example_dir: Path, history_size: int, init_frame: bool = False)
 
 
 def load_ground_truth(example_dir: Path, meta: dict, *, with_clip: bool) -> dict | None:
-    """Ground truth as written by the ``scripts/prepare_*_example.py`` converters,
+    """Ground truth as written by the ``scripts/data/sample_*.py`` converters,
     or None if the example has none (e.g. the bundled DAVIS/EgoDex clips).
 
     Keys: ``future_3d`` ``(P, F, 3)``, ``future_vis`` ``(P, F)`` bool or None,

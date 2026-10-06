@@ -2,9 +2,9 @@
 
 Writes `<output_root>/ytvis_<video>[_stride<N>]/` (the suffix only when
 `--stride N` > 1) with the same files as
-`scripts/prepare_molmospaces_example.py` (history frames, query points, 3D
+`scripts/data/sample_molmospaces.py` (history frames, query points, 3D
 history, intrinsics, caption, meta.json, clip.mp4, gt_future_3d.pt,
-gt_future_vis.pt), so `--side-by-side` in the quickstart works on it too.
+gt_future_vis.pt), so `--side-by-side` in scripts/run_molmo_motion.py works on it too.
 
 YT-VIS specifics:
   * Cameras are hand-held (moving), so every 3D point is expressed in the
@@ -24,11 +24,11 @@ YT-VIS specifics:
     the video's actual pixel coordinates.
 
 Usage:
-    python scripts/prepare_ytvis_example.py --video 0043f083b5
-    python scripts/prepare_ytvis_example.py --num_videos 5 --seed 0
+    python scripts/data/sample_ytvis.py --video 0043f083b5
+    python scripts/data/sample_ytvis.py --num_videos 5 --seed 0
 
 Then run the model on it:
-    python examples/01_quickstart.py --example ytvis_<video>[_stride<N>]
+    python scripts/run_molmo_motion.py --input result/molmo_motion_input/ytvis/ytvis_<video>[_stride<N>]
 """
 
 from __future__ import annotations

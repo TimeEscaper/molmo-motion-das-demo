@@ -19,15 +19,15 @@ again. Writes, per episode:
 
 `<episode dir>` is the episode key with "/" -> "__" and "#" -> "_" (e.g.
 `rtx_frames_success_14__49_bridge_episode_3715`) and `<video_id>` is `<dataset>_<episode>`
-(e.g. `bridge_3715`), the names scripts/prepare_sharerobot_example.py and the data-generation
+(e.g. `bridge_3715`), the names scripts/data/sample_sharerobot.py and the data-generation
 pipeline use. Odd frame sizes are cropped by one pixel (H.264 needs even sizes).
 
 A `--video` name may be the episode key (`rtx_frames_success_14/49_bridge#episode_3715`), the
 episode dir name, or the video id (`bridge_3715`, if unique).
 
-Usage (micromamba env `molmo`):
-    python scripts/extract_sharerobot_episodes.py --num_videos 5 --dataset bridge --seed 1
-    python scripts/extract_sharerobot_episodes.py --video bridge_3715 bridge_379
+Usage:
+    python scripts/data/extract_sharerobot.py --num_videos 5 --dataset bridge --seed 1
+    python scripts/data/extract_sharerobot.py --video bridge_3715 bridge_379
 """
 
 from __future__ import annotations
